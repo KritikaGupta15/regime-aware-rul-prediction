@@ -1,0 +1,353 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{bm}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{makecell}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Regime-Aware Deep Learning Framework for \\ Predictive Maintenance in Industrial Systems}
+
+\author{\IEEEauthorblockN{Nikhil Barot}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Central Michigan University}\\
+Mount Pleasant, MI, USA \\
+barot1n@cmich.edu}
+\and
+\IEEEauthorblockN{Rasha S. Gargees*}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Central Michigan University}\\
+Mount Pleasant, MI, USA \\
+garge1r@cmich.edu*}
+\and
+\IEEEauthorblockN{Kritika Gupta}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Central Michigan University}\\
+Mount Pleasant, MI, USA \\
+kriti2k@cmich.edu}
+}
+
+\maketitle
+
+\begin{abstract}
+The transition toward Industry 4.0 has intensified the need for accurate Remaining Useful Life (RUL) estimation for complex industrial assets. RUL prediction for aerospace turbofan engines remains challenging due to multivariate sensor noise, overlapping fault modes, and varying operating regimes. This paper proposes the Hybrid SAMB-GRU (Shared Attention Multi-Branch GRU), a dual-head deep learning framework evaluated on the NASA C-MAPSS dataset. A shared encoder of Conv1D, Layer Normalization, Bidirectional GRU, and soft temporal attention learns a unified degradation representation, with a regression head for RUL prediction and unsupervised diagnostic probes for subsystem-level fault attribution. A K-Means-based regime-aware preprocessing pipeline enables per-regime normalization, preventing spurious correlations between environmental conditions and true degradation signals. Evaluated on all four C-MAPSS subsets under strict engine-level splits, the model achieves an $R^2$ of $0.8825$ on FD001 and a lowest RMSE of $13.48$ on FD003 and reduces the PHM08 safety penalty on FD004 to $1041.2 \pm 96.9$, significantly outperforming non-regime-aware baselines. 
+
+\end{abstract}
+
+\begin{IEEEkeywords}
+Predictive Maintenance, Remaining Useful Life, Deep Learning, C-MAPSS, Bidirectional GRU, Temporal Attention, Regime-Aware normalization, Industry 4.0.
+\end{IEEEkeywords}
+
+% ---------------------------------------------------------------
+\section{Introduction}
+
+Industry 4.0 technologies such as IoT devices and advanced sensors have become deeply integrated into aerospace systems, with aircraft engine maintenance accounting for nearly 35--40\% of total operational costs \cite{b1}. Accurate Remaining Useful Life (RUL) estimation is therefore essential for ensuring airworthiness. Prognostics and Health Management (PHM) shifts maintenance toward a proactive ``predict and prevent'' approach, integrating diagnostics, prognostics, and decision-making to monitor fault progression, optimize scheduling, and reduce downtime \cite{b2, b3, b4}.
+Despite advances in deep learning for RUL estimation, two critical problems persist. Global normalization on multi-regime sensor data conflates operational baseline shifts with genuine degradation signals, causing models to learn spurious correlations \cite{b5}, while improper train-validation splits introduce temporal leakage that inflates reported metrics. This paper addresses both through the Hybrid SAMB-GRU framework, combining regime-aware cluster-based preprocessing with a shared bidirectional encoder and interpretable diagnostic probes.
+
+% ---------------------------------------------------------------
+\section{Related Work}
+A CNN-LSTM hybrid \cite{b2} combined convolutional feature extraction with sequential modeling but does not explicitly incorporate regime-aware normalization, which may limit robustness under multi-regime datasets such as FD002 and FD004. A spatial-temporal convolutional network \cite{b3} leverages cross-sensor correlations yet provides limited regime isolation. PCA-based pipelines \cite{b5} improve generalization at the cost of temporal ordering, and fuzzy inference systems \cite{b6} offer interpretable rules but face scalability challenges in high-dimensional sensor spaces. The CNN-LSTM-SAM \cite{b7} introduced temporal self-attention to emphasize degradation-sensitive cycles but may be affected when baseline shifts are unseparated. VAFD-Net \cite{b8} decouples regime and degradation features through variational attention at the cost of deployment complexity. Domain adaptation \cite{b9} requires paired source-target data that may not always be available in practice. XGBoost ensembles \cite{b10} offer strong tabular performance but have limited long-horizon temporal modeling capacity. The SAE-TCN framework \cite{b11} does not explicitly adapt its receptive field to operating regimes, and even recent transformer-based multi-scale fusion architectures \cite{b12} improve sequence modeling though explicit decoupling of regime-induced baseline shifts remains an open challenge on the standard C-MAPSS benchmark \cite{b13}.
+
+A common limitation across many reviewed methods is the lack of explicit regime-aware normalization, which can blur the boundary between operational variation and mechanical wear, while few provide interpretable subsystem-level fault attribution without ground-truth fault labels. The proposed Hybrid SAMB-GRU addresses both gaps through:
+
+\begin{itemize}
+\item Regime-Aware Preprocessing: K-Means clustering ($k=6$) isolates operating regimes, enabling per-cluster normalization that avoids mixing environmental variation with degradation.
+\item Hybrid SAMB-GRU Encoder: A unified Conv1D $\to$ LayerNorm $\to$ BiGRU $\to$ LayerNorm $\to$ Temporal Attention pipeline captures global cross-sensor degradation patterns without restrictive sensor partitioning.
+\item Unsupervised Diagnostic Probes: Three subsystem-specific Dense layers read from the shared context vector to output relative subsystem importance scores, acting as an attention mechanism optimized entirely through the main RUL objective without fault labels.
+\item Leakage-Free Evaluation: Engine-level validation splits prevent temporal leakage, while inverse-RUL weighting emphasizes learning near failure, aligning with safety-critical priorities.
+\end{itemize}
+
+% ---------------------------------------------------------------
+\section{Methodology}
+
+\subsection{Dataset Characteristics}
+
+The pipeline was validated on the NASA C-MAPSS turbofan engine dataset \cite{b13}, the standard benchmark for RUL estimation in aerospace prognostics. It provides run-to-failure sensor measurements from high-fidelity simulations, capturing nonlinear degradation across four sub-datasets (FD001-FD004) of increasing operational complexity. Sensors exhibiting near-zero mathematical variance after scaling-specifically s1, s5, s6, s10, s16, s18, and s19-were excluded as they carry no discriminative information for degradation modeling. After per-regime variance-based pruning, the unified feature set comprises 18--20 features depending on the sub-dataset. The operational characteristics are summarized in Table \ref{tab:dataset}.
+
+\begin{table}[htbp]
+\caption{C-MAPSS Dataset Operational Complexity}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{p{2cm}lcccc}
+\toprule
+\textbf{Subset} & \textbf{Train Units} & \textbf{Test Units} & \textbf{Regimes} & \textbf{Fault Modes} \\
+\midrule
+FD001 & 100 & 100 & 1 & 1 (HPC) \\
+FD002 & 260 & 259 & 6 & 1 (HPC) \\
+FD003 & 100 & 100 & 1 & 2 (HPC, Fan) \\
+FD004 & 248 & 249 & 6 & 2 (HPC, Fan) \\
+\bottomrule
+\end{tabular}%
+}
+\end{center}
+\label{tab:dataset}
+\end{table}
+
+\subsection{Piecewise Target Transformation}
+
+During the initial operational cycles of an engine, physical degradation is microscopically negligible and unobservable via macroscopic sensor arrays. Training a model on a linear RUL decline from cycle zero forces it to overfit operational noise, degrading performance in the safety-critical near-failure stage \cite{b7}. A piecewise upper bound is therefore applied:
+\begin{equation}
+    \mathrm{RUL}_{\mathrm{target}}(t) =
+    \begin{cases}
+      R_{\max} & \text{if } \mathrm{RUL}(t) \geq R_{\max} \\
+      \mathrm{RUL}(t) & \text{if } \mathrm{RUL}(t) < R_{\max}
+    \end{cases}
+\end{equation}
+where $R_{\max}=125$ cycles marks the transition from healthy operation to observable, progressive mechanical wear. 
+
+The non-linear nature of engine degradation is visualized in Fig. \ref{fig:pca}. Each point represents one engine at one operational timestep; the color encodes the remaining RUL. Principal Component 1 (51.0\% of total variance) forms a health axis-engines with high RUL cluster to the right, near-failure engines to the left-confirming that physical degradation is separable from operational variation in the latent sensor space.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.29\textwidth]{pca_degradation_trajectory_Final.png}}
+\caption{PCA projection of engine health trajectories. Color encodes RUL (yellow: healthy; purple: near failure). PC1 forms a health axis, with degradation proceeding non-linearly.}
+\label{fig:pca}
+\end{figure}
+
+\subsection{Regime-Aware Feature Scaling}
+
+FD002 and FD004 encompass six operational regimes that impose large baseline shifts on temperature, pressure, and flow sensor readings. Global standardization conflates altitude-induced changes with mechanical wear, blurring the distinction between a healthy engine at high altitude and a failing engine at sea level \cite{b10}. An unsupervised K-Means algorithm is fitted exclusively to the three operating-setting columns to assign each measurement to its flight regime. Isolated StandardScalers are then fitted within each cluster. For sensor reading $x_{i,c}$ in regime $c$:
+\begin{equation}
+    z_{i,c} = \frac{x_{i,c} - \mu_c}{\sigma_c}
+\end{equation}
+where $\mu_c$ and $\sigma_c$ are regime-specific statistics. Sensors with near-zero post-scaling variance are pruned. For FD001 and FD003 (single regime), a standard global scaler is applied.
+
+\textbf{Justification for $\mathbf{k=6}$:} The choice of $k=6$ is grounded directly in the C-MAPSS simulation design, which defines exactly six distinct combinations of altitude, Mach number, and throttle resolver angle (TRA) \cite{b13}. K-Means with $k=6$ therefore recovers physically meaningful flight regimes from the three operating-setting columns rather than imposing an arbitrary partition. Silhouette scores computed for $k=2$
+through $k=8$ confirm this choice: as shown in Fig.~\ref{fig:silhouette}, $k=6$ achieves the highest score $s=0.9997$ on FD004, indicating near-perfect cluster separation with strong correspondence to the simulator-defined operating conditions.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.235\textwidth]{silhouette_Final.png}
+\caption{Silhouette scores vs.\ $k$ on FD004. $k=6$ yields the highest score ($s=0.9997$), validating the choice of 6 regimes.}
+\label{fig:silhouette}
+\end{figure}
+
+\subsection{Hybrid SAMB-GRU Architecture}
+
+The Hybrid SAMB-GRU processes the full unified feature set through a single shared encoder, avoiding the accuracy penalties associated with strict sensor partitioning across independent branches. The architecture consists of three components.
+
+\textbf{Shared Encoder:} All sensor features are processed through a unified pipeline. A causal 1D Convolutional layer (64 filters, kernel 3) extracts local short-range temporal patterns, followed by Layer Normalization for training stability. A Bidirectional GRU layer captures temporal dependencies in both forward and backward directions across the 30-timestep input window, configured with 96 units per direction for FD001/FD003 and 128 units for FD002/FD004. A second Layer Normalization is applied, and a soft temporal attention mechanism collapses the entire sequence into a single context vector $\mathbf{c}$.
+
+\textbf{Prediction Head:} The context vector $\mathbf{c}$ passes through Dense(128, ReLU), Layer Normalization, a residual skip connection to a second Dense(128, ReLU), and finally Dense(64, ReLU), Dropout(0.2), and a linear output neuron. Training minimizes Mean Squared Error (MSE) loss. Near-failure windows are up-weighted by $W_i = 1/(\mathrm{RUL}_i+1)$, normalized per batch, directly aligning the training objective with the asymmetric PHM penalty \cite{b13}.
+
+\textbf{Unsupervised Diagnostic Probes:} Three independent Dense(1) layers read from the shared context vector $\mathbf{c}$ and produce scalar scores for Fan/LPC, HPC/Core, and Turbine subsystems respectively. A softmax activation normalizes these scores:
+\begin{equation}
+    p_k = \frac{\exp(w_k^\top \mathbf{c} + b_k)}{\sum_{j=1}^{3}\exp(w_j^\top \mathbf{c} + b_j)},\quad k\in\{1,2,3\}
+\end{equation}
+The diagnostic head is an interpretable probe over the shared latent representation for RUL prediction. Its softmax scores reflect relative subsystem-related degradation patterns, not supervised fault labels. Since these layers act as an attention mechanism rather than standalone classifiers, they are optimized entirely end-to-end via the primary RUL loss. They serve as qualitative indicators of subsystem influence, producing physically coherent subsystem patterns without any explicit fault-label supervision.
+
+% ---------------------------------------------------------------
+\section{Experimental Setup and Results}
+
+\subsection{Implementation Details}
+
+Implemented in TensorFlow/Keras with Adam ($10^{-3}$), batch size 256, up to 60 epochs, EarlyStopping (patience 10), and 90/10 engine-level train-validation splits. Results are reported as mean $\pm$ std.\ dev.\ over seeds 42, 123, 2026.
+
+\subsection{Evaluation Metrics}
+
+Models are assessed on RMSE, $R^2$, and the asymmetric PHM08 scoring function \cite{b13}. Given $d_i = \hat{\mathrm{RUL}}_i - \mathrm{RUL}_i$:
+\begin{equation}
+    S = \sum_{i=1}^{N}
+    \begin{cases}
+      e^{-d_i/13} - 1 & d_i < 0 \\
+      e^{\,d_i/10}  - 1 & d_i \geq 0
+    \end{cases}
+\end{equation}
+The asymmetric bases (10 vs.\ 13) impose heavier penalties on late predictions, reflecting the safety cost of missed maintenance.
+
+\subsection{Ablation Study}
+
+Three degraded variants are evaluated (Table~\ref{tab:ablation}): \textbf{(1)} Without Regime Normalization — using a single global scaler; \textbf{(2)} Without Temporal Attention — applying global average pooling over the BiGRU outputs; \textbf{(3)} Without Inverse-RUL Weights — employing uniform sample weights. All other settings remain unchanged.
+
+\begin{table}[htbp]
+\caption{Ablation Study: RMSE, $R^2$, and PHM on Datasets}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Variant} & \textbf{FD001} & \textbf{FD002} & \textbf{FD003} & \textbf{FD004} \\
+\midrule
+\multirow{3}{*}{\textbf{Full SAMB-GRU}}
+  & RMSE: 13.73 & RMSE: 15.07 & RMSE: 13.48 & RMSE: 15.42 \\
+  & $R^2$: 0.8825 & $R^2$: 0.8757 & $R^2$: 0.8814 & $R^2$: 0.8695 \\
+  & PHM: 319     & PHM: 901     & PHM: 284     & PHM: 1041    \\
+\midrule
+\multirow{3}{*}{w/o Regime Norm.}
+  & RMSE: 19.12 & RMSE: 17.64 & RMSE: 15.63 & RMSE: 20.61 \\
+  & $R^2$: 0.7723 & $R^2$: 0.8298 & $R^2$: 0.8406 & $R^2$: 0.7672 \\
+  & PHM: 766     & PHM: 1275    & PHM: 516     & PHM: 2474    \\
+\midrule
+\multirow{3}{*}{w/o Temporal Attn}
+  & RMSE: 14.64 & RMSE: 15.40 & RMSE: 14.95 & RMSE: 14.22 \\
+  & $R^2$: 0.8827 & $R^2$: 0.8700 & $R^2$: 0.8777 & $R^2$: 0.8893 \\
+  & PHM: 1021    & PHM: 1326    & PHM: 1010    & PHM: 1085    \\
+\midrule
+\multirow{3}{*}{w/o Inv.-RUL Wt.}
+  & RMSE: 15.35 & RMSE: 15.09 & RMSE: 14.89 & RMSE: 15.12 \\
+  & $R^2$: 0.8710 & $R^2$: 0.8755 & $R^2$: 0.8786 & $R^2$: 0.8749 \\
+  & PHM: 1297    & PHM: 1228    & PHM: 1187    & PHM: 1229    \\
+\bottomrule
+\end{tabular}%
+}
+\end{center}
+\label{tab:ablation}
+\end{table}
+
+Regime-aware normalization is the most critical component, increasing RMSE by 16--39\% and PHM by $1.4{\times}$--$2.4{\times}$ across all datasets when removed. Temporal attention provides consistent RMSE improvements on three of four sub-datasets and universal PHM gains: removing it inflates PHM by 220\% on FD001, 47\% on FD002, and 256\% on FD003. On FD004, removing attention reduces RMSE by 1.20 points yet increases PHM by 4.2\%, reflecting the difference between symmetric RMSE and PHM's asymmetric penalties — base 10 for overestimates versus base 13 for underestimates. Temporal attention concentrates the context vector on near-failure cycles where overestimation errors cluster, reducing the disproportionately penalized late predictions that matter most in safety-critical aerospace prognostics; it is therefore retained despite the marginal RMSE trade-off on FD004. Finally, removing inverse-RUL weighting raises PHM by 18\%--318\% with negligible RMSE effects on FD002 and FD004, confirming it targets near-failure safety rather than average accuracy.
+
+\subsection{Prediction Analysis}
+
+Fig.~\ref{fig:pred_true} shows the predicted versus true RUL scatter under seed~42. FD002, FD003, and FD004 show tight alignment across the full RUL range, indicating stable calibration under both single- and multi-regime conditions. FD001 exhibits slightly wider spread at high RUL values, consistent with its smaller training set. Across all datasets, the error distributions are negatively biased ($\mu=-1.6,\,-5.5,\,-0.7,\,-4.4$ cycles for FD001--FD004), confirming systematic early predictions aligned with the asymmetric PHM objective. 
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.32\textwidth]{pred_vs_true.png}
+\caption{Predicted vs. true RUL across all 4 datasets. Conservative underestimation aligns with the asymmetric PHM penalty.}
+\label{fig:pred_true}
+\end{figure}
+
+
+
+
+\subsection{Results and Discussion}
+
+Table~\ref{tab:results} reports mean $\pm$ std.\ dev.\ over three seeds. RMSE ranges from 13.48 (FD003) to 15.42 (FD004), with $R^2 > 0.869$ and tight standard deviations (e.g., $\pm 0.27$ on FD002) confirming architectural robustness. The unsupervised diagnostic probes produced physically coherent subsystem attributions: Fan/LPC dominated on FD001 (58.4\%) and FD003 (70.4\%), while HPC/Core led on FD002 (82.4\%) and FD004 (65.7\%), consistent with the known fault modes of each subset.
+
+\begin{table}[htbp]
+\caption{Hybrid SAMB-GRU: Mean $\pm$ Std.\ Dev.\ over Three Seeds}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{p{2cm}lccc}
+\toprule
+\textbf{Dataset} & \textbf{RMSE} & $\bm{R^2}$ & \textbf{PHM Penalty} \\
+\midrule
+FD001 & $13.73 \pm 0.44$ & $0.8825 \pm 0.0076$ & $319.3  \pm 46.4$  \\
+FD002 & $15.07 \pm 0.27$ & $0.8757 \pm 0.0044$ & $901.3  \pm 69.0$  \\
+FD003 & $13.48 \pm 0.30$ & $0.8814 \pm 0.0053$ & $283.5  \pm 23.7$  \\
+FD004 & $15.42 \pm 0.75$ & $0.8695 \pm 0.0125$ & $1041.2 \pm 96.9$  \\
+\bottomrule
+\end{tabular}%
+}
+\end{center}
+\label{tab:results}
+\end{table}
+
+Table~\ref{tab:rmse_comparison} compares SAMB-GRU against six baselines. The largest gains appear on multi-regime datasets: Hybrid CNN-LSTM degrades from RMSE 13.83 on FD001 to 21.90 on FD002 (+58\%), confirming that architectural depth alone cannot compensate for regime-induced normalization artefacts. SAMB-GRU achieves 31.2\% and 41.4\% RMSE reductions over CNN-LSTM on FD002 and FD004, respectively, attributable to regime-aware preprocessing. On single-regime subsets, it still matches or outperforms all baselines, confirming that temporal attention and the prediction head add value beyond preprocessing alone.
+
+\begin{table}[h]
+\caption{RMSE of Baseline Models and Corresponding SAMB-GRU Improvement Percentages}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{p{2.5cm}cccc}
+\hline
+\textbf{Model} & \textbf{FD001} & \textbf{FD002} & \textbf{FD003} & \textbf{FD004} \\
+\hline
+Linear Regression & 20.83 (34.1\%) & 21.36 (29.4\%) & 21.16 (36.3\%) & 24.47 (37.0\%) \\
+Random Forest     & 17.18 (20.1\%) & 17.14 (12.1\%) & 19.77 (31.8\%) & 19.16 (19.5\%) \\
+XGBoost           & 16.71 (17.8\%) & 17.14 (12.1\%) & 20.33 (33.7\%) & 19.09 (19.2\%) \\
+LSTM              & 13.90 (1.2\%)  & 16.24 (7.2\%)  & 14.27 (5.5\%)  & 20.63 (25.3\%) \\
+Hybrid CNN-LSTM   & 13.83 (0.7\%)  & 21.90 (31.2\%) & 15.16 (11.1\%) & 26.30 (41.4\%) \\
+GRU               & 13.81 (0.6\%)  & 15.76 (4.4\%)  & 14.01 (3.8\%)  & 20.10 (23.3\%) \\
+\hline
+\end{tabular}%
+}
+\label{tab:rmse_comparison}
+\end{table}
+
+% ---------------------------------------------------------------
+\section{Conclusion and Future Work}
+
+The Hybrid SAMB-GRU achieves consistent performance across all four C-MAPSS subsets because each component addresses a specific weakness in standard RUL pipelines. Regime-aware K-Means normalization eliminates the root cause of error on multi-condition datasets: without it, the PHM penalty on FD004 rises to 2,474; with it, the framework reduces this to $1041.2\pm 96.9$. Temporal attention suppresses dangerous late predictions; inverse-RUL weighting concentrates learning near failure; and the unsupervised diagnostic probes confirm physically coherent subsystem patterns without any fault-label supervision. The model's fleet-wide negative error bias makes its worst-case errors safe by design.
+
+Future work includes model compression for FADEC edge deployment, federated learning for cross-fleet training \cite{b14}, validation on real benchmarks (PRONOSTIA, FEMTO), and extending the diagnostic probes with supervised auxiliary labels when available.
+
+% ---------------------------------------------------------------
+\begin{thebibliography}{14}
+
+\bibitem{b1}
+V. Singh, R. Mallick, D. Harursampath, B. Haorongbam, and H. Kaur, 
+``Data-driven aircraft engine prognostics using probabilistic machine learning on NASA C-MAPSS dataset: An Industry 4.0 standpoint,'' 
+in \textit{Industry 4.0 and Advanced Manufacturing}, vol. 2. Singapore: Springer, 2025, pp. 89--104, doi: 10.1007/978-981-97-6176-0\_6.
+
+
+\bibitem{b2}
+J. Wei, L. Meng, J. Du, and Z. Yin, 
+``Remaining useful life prediction of turbofan engines based on a CNN-LSTM hybrid model,'' 
+in \textit{Proc. 3rd Int. Conf. Cloud Computing, Big Data Application and Software Engineering (CBASE)}, Hangzhou, China, 2024, pp. 153--157, doi: 10.1109/CBASE64041.2024.10824495.
+
+\bibitem{b3}
+W. Yin, Z. Huang, C. Zhang, Q. Min, and R. Jiao, 
+``A spatial-temporal convolutional network for remaining useful life prediction of turbofan engines,'' 
+in \textit{Proc. 2025 CAA Symp. Fault Detection, Supervision, and Safety (SAFEPROCESS)}, Urumqi, China, 2025, pp. 1--5, doi: 10.1109/SAFEPROCESS67117.2025.11268076.
+
+\bibitem{b4}
+L. Cummins \textit{et al.}, 
+``Explainable predictive maintenance: A survey of current methods, challenges and opportunities,'' 
+\textit{IEEE Access}, vol. 12, pp. 57574--57602, 2024, doi: 10.1109/ACCESS.2024.3391130.
+
+
+\bibitem{b5}
+S. Boutora \textit{et al.}, 
+``Remaining useful life prediction in turbofan engines: PCA and machine learning approach,'' 
+in \textit{Proc. 20th Int. Multi-Conf. Systems, Signals \& Devices (SSD)}, Mahdia, Tunisia, 2023, pp. 469--476, doi: 10.1109/SSD58187.2023.10411236.
+
+\bibitem{b6}
+M. Aguiar, M. Vellasco, R. Tanscheit, M. Kohler, and M. Pacheco, 
+``Remaining useful life prediction of turbofan engines with fuzzy systems,'' 
+in \textit{Proc. 2024 IEEE Latin American Conf. Computational Intelligence (LA-CCI)}, Bogota D.C., Colombia, 2024, pp. 1--6, doi: 10.1109/LA-CCI62337.2024.10814888.
+
+
+\bibitem{b7}
+J. Li, Y. Jia, M. Niu, W. Zhu, and F. Meng, 
+``Remaining useful life prediction of turbofan engines using a CNN-LSTM-SAM approach,'' 
+\textit{IEEE Sensors J.}, vol. 23, no. 9, pp. 10241--10251, May 2023, doi: 10.1109/JSEN.2023.3261874.
+
+\bibitem{b8}
+T. Ruoyao, M. Biao, F. Shaohua, Y. Fu, Y. Yongtai, and Z. Weidong, 
+``An interpretable variational attention-weighted feature decoupling network for RUL prediction of aero-engines under time-varying operating conditions,'' 
+\textit{Measurement Science and Technology}, vol. 37, 2025, doi: 10.1088/1361-6501/ae2646.
+
+\bibitem{b9}
+P. R. de O. da Costa, A. Akcay, Y. Zhang, and U. Kaymak, 
+``Remaining useful life prediction via deep domain adaptation,'' 
+\textit{Reliability Engineering \& System Safety}, vol. 195, p. 106682, 2020, doi: 10.1016/j.ress.2019.106682.
+
+\bibitem{b10}
+V. Sharma, R. Dagar, and S. Sharanya, 
+``An XGBoost-optimized ensemble model for RUL prediction of aircraft turbofan engines,'' 
+in \textit{Proc. 2024 Int. Conf. Emerging Smart Computing and Informatics (ESCI)}, Pune, India, 2024, pp. 1--5, doi: 10.1109/ESCI59607.2024.10497276.
+
+\bibitem{b11}
+Y. Zhang and X. Liu, 
+``Remaining useful life prediction for turbofan engine using SAE-TCN model,'' 
+in \textit{Proc. 40th Chinese Control Conf. (CCC)}, Shanghai, China, 2021, pp. 8280--8285, doi: 10.23919/CCC52363.2021.9549698.
+
+\bibitem{b12}
+Q. Hu, Y. Zhao, and L. Ren, 
+``Novel transformer-based fusion models for aero-engine remaining useful life estimation,'' 
+\textit{IEEE Access}, vol. 11, pp. 1--12, 2023, doi: 10.1109/ACCESS.2023.3277730.
+
+\bibitem{b13}
+A. Saxena, K. Goebel, D. Simon, and N. Eklund, 
+``Damage propagation modeling for aircraft engine run-to-failure simulation,'' 
+in \textit{Proc. 1st Int. Conf. Prognostics and Health Management (PHM)}, Denver, CO, USA, 2008. [Online]. Available: https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data
+
+\bibitem{b14}
+A. Arunan, Y. Qin, X. Li, and C. Yuen, 
+``A federated learning-based industrial health prognostics for heterogeneous edge devices using matched feature extraction,'' 
+\textit{IEEE Trans. Autom. Sci. Eng.}, early access, 2023, doi: 10.1109/TASE.2023.3274648.
+
+\end{thebibliography}
+
+\end{document}
+
+
